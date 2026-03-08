@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <title>TABKLUNG v11.7 - TOTAL KEY REFORM</title>
+    <title>ABK31 | by: Kang Putra Angklung</title>
     <script src="https://unpkg.com/@tonejs/midi"></script>
     <style>
         :root { 
@@ -78,7 +78,7 @@
     <div class="app-header">
         <img src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjvm4FDE7tagy8ZtWyfy_pzRnB9D8orAO_5EwH5sBbJOC3JIOlGweg5XCwhWQZbY8xVIFTbMpojvtX3X-BZv_xfrvjzIkXn3-RYIwFJMhOnM-y0YaO8JZocqYoFmq4NSdHwsPzAp8kIjzfFtCL8KrgDiueLZRhApll7tvcTmeRS6lcBtjEK4ZthgkS7rmI/s320/kang_putra__1_-removebg-preview.png" class="app-logo">
         <div style="flex:1">
-            <h3 style="margin:0; color:var(--gold); font-size:14px;">TABKLUNG v11.7 FIX</h3>
+            <h3 style="margin:0; color:var(--gold); font-size:14px;">ABK31 | by: Kang Putra Angklung</h3>
             <input type="text" id="song-title" class="song-title-input" placeholder="Judul Lagu..." oninput="app.save()">
         </div>
     </div>
@@ -169,14 +169,11 @@ const app = {
         this.rebuildTimeline(); this.renderAll(); this.initEvents();
     },
 
-    // REFORMED: Visual display logic now respects keyBase dynamically
     numToSmartDisplay(n) {
         if(!n || isNaN(n)) return n;
         if(this.displayMode === 'piano') return this.numToSolfege(n);
         
         let val = parseInt(n);
-        // Standard MIDI C4 = 60. Calculate offset relative to Key Base
-        // Example: If KeyBase = 7 (G), then 67 becomes '1'
         let relativeNote = val - (60 + this.keyBase);
         let octave = Math.floor(relativeNote / 12);
         let noteInOctave = ((relativeNote % 12) + 12) % 12;
@@ -187,7 +184,6 @@ const app = {
         return baseNum;
     },
 
-    // REFORMED: Play Tone now strictly synced with MIDI 60
     playTone(f) { 
         const o = this.audio.createOscillator(), g = this.audio.createGain(); 
         o.type='triangle'; 
@@ -217,7 +213,6 @@ const app = {
         if(step !== this.lastStep) {
             this.lastStep = step;
             const bar = this.getBarById(this.timeline[barIdx].id);
-            // FREQUENCY SYNC: MIDI 60 = 261.63 Hz (C4)
             for(let r=0; r<5; r++) {
                 if(bar.grid[r][subStep]) {
                     const midiNote = parseInt(bar.grid[r][subStep]);
@@ -239,11 +234,18 @@ const app = {
             let notes = [];
             midi.tracks.forEach(t => t.notes.forEach(n => notes.push({midi: n.midi, step: Math.round(n.time / sps)})));
             
-            // SECURITY: No auto-transpose, keep original MIDI notes
             this.sections = [{ id: Date.now(), name: "MIDI IMPORT", bars: [], collapsed: false }];
+            
+            // MODIFIKASI: Octave Folding (Filter Range 55-85)
             notes.sort((a,b) => a.step - b.step).forEach(n => {
                 let m = n.midi; 
-                if(m >= 24 && m <= 108) { // Range diperluas
+                
+                // Sistem Auto-Transpose / Octave Folding
+                while (m < 55) m += 12; // Geser naik jika terlalu rendah
+                while (m > 85) m -= 12; // Geser turun jika terlalu tinggi
+                
+                // Final Check: Hanya masukkan jika benar-benar masuk range Angklung
+                if (m >= 55 && m <= 85) {
                     let bIdx = Math.floor(n.step / 16), sStep = n.step % 16;
                     while(this.sections[0].bars.length <= bIdx) {
                         this.sections[0].bars.push({ 
@@ -256,13 +258,14 @@ const app = {
                     for(let r=0; r<5; r++) if(bar.grid[r][sStep] === "") { bar.grid[r][sStep] = m.toString(); break; }
                 }
             });
+            
             this.sections[0].bars.forEach(b => this.sortNotesInBar(b));
             this.rebuildTimeline(); this.renderAll(); this.save();
+            alert("MIDI Berhasil Diimpor dengan Octave Folding (Range 55-85)!");
         };
         reader.readAsArrayBuffer(file);
     },
 
-    // PRESERVED FEATURE: Angklung Quantize
     quantizeToAngklung(bId, mode = 'all') {
         const bar = this.getBarById(bId);
         if (!bar) return;
@@ -295,7 +298,6 @@ const app = {
         this.renderAll(); this.save(); alert("Proses Quantize Berhasil!");
     },
 
-    // PRESERVED FEATURE: Double Octave
     doubleOctave(bId) {
         const bar = this.getBarById(bId);
         if (!bar) return;
@@ -312,7 +314,6 @@ const app = {
         this.sortNotesInBar(bar); this.renderAll(); this.save();
     },
 
-    // PRESERVED FEATURE: Auto Chord
     autoChord(bId) {
         const bar = this.getBarById(bId);
         if (!bar) return;
@@ -342,7 +343,6 @@ const app = {
         return notes[0];
     },
 
-    // CORE UI & UTILS
     renderAll() {
         const container = document.getElementById('sections-container');
         container.innerHTML = this.sections.map(s => `
