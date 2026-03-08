@@ -59,11 +59,11 @@
         #autocomplete-box {
             position: fixed; background: #1e293b; border: 1px solid var(--gold);
             border-radius: 4px; z-index: 1000; display: none; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-            max-height: 150px; overflow-y: auto;
+            max-height: 200px; overflow-y: auto; min-width: 60px;
         }
         .suggest-item {
-            padding: 5px 12px; cursor: pointer; font-size: 12px; color: white;
-            border-bottom: 1px solid #334155;
+            padding: 8px 12px; cursor: pointer; font-size: 14px; color: white;
+            border-bottom: 1px solid #334155; text-align: center;
         }
         .suggest-item:hover, .suggest-item.active { background: var(--gold); color: black; }
 
@@ -185,6 +185,7 @@ const app = {
     },
 
     playTone(f) { 
+        if(!this.audio) this.audio = new AudioContext();
         const o = this.audio.createOscillator(), g = this.audio.createGain(); 
         o.type='triangle'; 
         o.frequency.value=f; 
@@ -236,15 +237,11 @@ const app = {
             
             this.sections = [{ id: Date.now(), name: "MIDI IMPORT", bars: [], collapsed: false }];
             
-            // MODIFIKASI: Octave Folding (Filter Range 55-85)
             notes.sort((a,b) => a.step - b.step).forEach(n => {
                 let m = n.midi; 
+                while (m < 55) m += 12; 
+                while (m > 85) m -= 12; 
                 
-                // Sistem Auto-Transpose / Octave Folding
-                while (m < 55) m += 12; // Geser naik jika terlalu rendah
-                while (m > 85) m -= 12; // Geser turun jika terlalu tinggi
-                
-                // Final Check: Hanya masukkan jika benar-benar masuk range Angklung
                 if (m >= 55 && m <= 85) {
                     let bIdx = Math.floor(n.step / 16), sStep = n.step % 16;
                     while(this.sections[0].bars.length <= bIdx) {
@@ -362,6 +359,7 @@ const app = {
                                 <input value="${b.name || 'BAR ' + (bIdx + 1)}" oninput="app.updateBarName(${b.id}, this.value)" style="background:none; border:none; color:var(--gold); font-size:10px; font-weight:bold; width:60px;">
                                 <button class="btn-tool" style="background:#334; padding:4px 8px;" onclick="app.shift(${b.id}, 'all', 'L')">◀</button>
                                 <button class="btn-tool" style="background:#334; padding:4px 8px;" onclick="app.shift(${b.id}, 'all', 'R')">▶</button>
+                                <button class="btn-tool" style="background:var(--deep-orange);" onclick="app.manualSort(${b.id})">🗂️ SORT</button>
                                 <button class="btn-tool" style="background:var(--accent); color:black;" onclick="app.doubleOctave(${b.id})">💎 Double</button>
                                 <button class="btn-tool" style="background:#8b5cf6;" onclick="app.autoChord(${b.id})">🪄 Chord</button>
                                 <div style="display:flex; align-items:center; gap:2px; background:#1e293b; padding:2px; border-radius:6px; border:1px solid #334;">
@@ -404,12 +402,31 @@ const app = {
         let v=parseInt(n), oct=Math.floor(v/12)-1, idx=v%12; 
         return notes[idx]+oct; 
     },
+
     solfegeToNum(s) { 
-        const m = {"C":0,"C#":1,"D":2,"D#":3,"E":4,"F":5,"F#":6,"G":7,"G#":8,"A":9,"A#":10,"B":11}; 
-        let match=s.match(/([A-G]#?)(\d)/i); 
-        if(match) return (m[match[1].toUpperCase()]+(parseInt(match[2])+1)*12).toString(); 
-        return s; 
+        if(!s) return "";
+        const chromaticMap = { "1/":1, "1\\":1, "2/":3, "2\\":3, "4/":6, "4\\":6, "5/":8, "5\\":8, "6/":10, "6\\":10 };
+        const baseMap = { "1":0, "2":2, "3":4, "4":5, "5":7, "6":9, "7":11 };
+        
+        // Handle Piano Mode (A-G notation)
+        if (s.match(/[A-G]/i)) {
+            const m = {"C":0,"C#":1,"D":2,"D#":3,"E":4,"F":5,"F#":6,"G":7,"G#":8,"A":9,"A#":10,"B":11}; 
+            let match=s.match(/([A-G]#?)(\d)/i); 
+            if(match) return (m[match[1].toUpperCase()]+(parseInt(match[2])+1)*12).toString(); 
+            return s;
+        }
+
+        // Handle Solfege Mode (123 notation)
+        let clean = s.replace(/[\.\u0323]/g, '');
+        let octave = (s.split('.').length - 1) - (s.split('\u0323').length - 1);
+        
+        let semi = baseMap[clean[0]] || 0;
+        if (chromaticMap[clean]) semi = chromaticMap[clean];
+
+        let midi = 60 + this.keyBase + semi + (octave * 12);
+        return midi.toString();
     },
+
     getCellStyle(val, isChord) { 
         if(!val) return ""; 
         if(isChord) return "background:#fbbf2433 !important; color:var(--gold); border-color:var(--gold);"; 
@@ -433,23 +450,54 @@ const app = {
         if(r === 5) return; 
         const val = el.value.toUpperCase();
         if(!val) { this.hideAutocomplete(); return; }
-        const matches = this.noteList.filter(n => n.startsWith(val)).slice(0, 5);
-        if(matches.length > 0) {
-            this.showAutocomplete(el, matches, (selected) => {
-                el.value = selected;
-                this.updateGrid(bId, r, c, selected);
-                this.hideAutocomplete();
-            });
-        } else { this.hideAutocomplete(); }
+
+        if (this.displayMode === 'piano' && isNaN(val[0])) {
+            const matches = this.noteList.filter(n => n.startsWith(val)).slice(0, 5);
+            if(matches.length > 0) {
+                this.showAutocomplete(el, matches, (selected) => {
+                    el.value = selected;
+                    this.updateGrid(bId, r, c, selected);
+                    this.hideAutocomplete();
+                });
+            } else { this.hideAutocomplete(); }
+        } else {
+            // Solmisasi Autocomplete Logic
+            const num = val[0];
+            if ("1234567".includes(num)) {
+                let options = [];
+                let isKromis = val.includes('/') || val.includes('\\');
+                let base = isKromis ? num + (val.includes('/') ? '/' : '\\') : num;
+                let displayBase = isKromis ? num + "\u0338" : num;
+
+                options = [
+                    { label: displayBase + "\u0323 (Rendah)", val: base + "\u0323" },
+                    { label: displayBase + " (Polos)", val: base },
+                    { label: displayBase + ". (Tinggi)", val: base + "." },
+                    { label: displayBase + ".. (Sangat Tinggi)", val: base + ".." }
+                ];
+
+                this.showAutocomplete(el, options.map(o => o.label), (selectedLabel) => {
+                    const selectedObj = options.find(o => o.label === selectedLabel);
+                    el.value = selectedObj.val;
+                    this.updateGrid(bId, r, c, selectedObj.val);
+                    this.hideAutocomplete();
+                });
+            } else { this.hideAutocomplete(); }
+        }
     },
 
     showAutocomplete(target, list, onSelect) {
         const box = document.getElementById('autocomplete-box');
         const rect = target.getBoundingClientRect();
         box.style.display = 'block'; box.style.left = rect.left + 'px';
-        box.style.top = (rect.top + rect.height + 2) + 'px'; box.style.width = rect.width + 'px';
+        box.style.top = (rect.top + rect.height + 2) + 'px'; box.style.width = 'auto';
         box.innerHTML = list.map(item => `<div class="suggest-item">${item}</div>`).join('');
-        box.querySelectorAll('.suggest-item').forEach((item, idx) => { item.onclick = () => onSelect(list[idx]); });
+        box.querySelectorAll('.suggest-item').forEach((item, idx) => { 
+            item.onclick = (e) => { 
+                e.stopPropagation();
+                onSelect(list[idx]); 
+            }; 
+        });
     },
 
     hideAutocomplete() { document.getElementById('autocomplete-box').style.display = 'none'; },
@@ -462,17 +510,36 @@ const app = {
     deleteSec(id) { if(confirm("Hapus grup?")) { this.sections = this.sections.filter(s => s.id !== id); this.rebuildTimeline(); this.renderAll(); } },
     updateSecName(id, v) { this.sections.find(s => s.id === id).name = v; this.save(); },
     updateBarName(id, v) { this.getBarById(id).name = v; this.save(); },
+    
     updateGrid(bId, r, c, v) { 
         const b = this.getBarById(bId); 
-        if(r<5 && this.displayMode === 'piano') v = this.solfegeToNum(v); 
+        if(r<5) v = this.solfegeToNum(v); 
         b.grid[r][c] = v; 
-        this.sortNotesInBar(b); this.renderAll(); this.save(); 
+        this.renderAll(); this.save(); 
     },
-    sortNotesInBar(b) { for(let c=0; c<16; c++) { let notes = []; for(let r=0; r<5; r++) if(b.grid[r][c]) notes.push(parseInt(b.grid[r][c])); let sorted = [...new Set(notes)].sort((a,b) => b-a); for(let r=0; r<5; r++) b.grid[r][c] = sorted[r] ? sorted[r].toString() : ""; } },
+
+    manualSort(bId) {
+        const b = this.getBarById(bId);
+        if(b) {
+            this.sortNotesInBar(b);
+            this.renderAll();
+            this.save();
+        }
+    },
+
+    sortNotesInBar(b) { 
+        for(let c=0; c<16; c++) { 
+            let notes = []; 
+            for(let r=0; r<5; r++) if(b.grid[r][c]) notes.push(parseInt(b.grid[r][c])); 
+            let sorted = [...new Set(notes)].sort((a,b) => b-a); 
+            for(let r=0; r<5; r++) b.grid[r][c] = sorted[r] ? sorted[r].toString() : ""; 
+        } 
+    },
+
     getBarById(id) { for(let s of this.sections) { let b = s.bars.find(x => x.id === id); if(b) return b; } },
     shift(bId, rIdx, dir) { const b = this.getBarById(bId); const move = (a) => dir === 'L' ? a.push(a.shift()) : a.unshift(a.pop()); if(rIdx === 'all') b.grid.forEach(row => move(row)); else move(b.grid[rIdx]); this.renderAll(); this.save(); },
     rebuildTimeline() { this.timeline = []; this.sections.forEach(s => s.bars.forEach(b => this.timeline.push({id: b.id}))); document.getElementById('playback-slider').max = Math.max(0, this.timeline.length * 16 - 1); },
-    play() { if(this.isPlaying) { this.isPlaying = false; document.getElementById('play-btn').innerText = '▶ PLAY'; this.pauseOffset = this.audio.currentTime - this.startTime; } else { if(!this.audio) this.audio = new AudioContext(); this.isPlaying = true; document.getElementById('play-btn').innerText = '⏸ PAUSE'; this.startTime = this.audio.currentTime - this.pauseOffset; this.syncLoop(); } },
+    play() { if(this.isPlaying) { this.isPlaying = false; document.getElementById('play-btn').innerText = '▶ PLAY'; if(this.audio) this.pauseOffset = this.audio.currentTime - this.startTime; } else { if(!this.audio) this.audio = new AudioContext(); this.isPlaying = true; document.getElementById('play-btn').innerText = '⏸ PAUSE'; this.startTime = this.audio.currentTime - this.pauseOffset; this.syncLoop(); } },
     stop() { this.isPlaying = false; this.playLimitStep = -1; document.getElementById('play-btn').innerText = '▶ PLAY'; this.pauseOffset = 0; this.currentBarIdx = -1; this.lastStep = -1; document.getElementById('playback-slider').value = 0; document.getElementById('slider-fill').style.width = '0%'; },
     playSingleBar(bId) {
         const barIdx = this.timeline.findIndex(item => item.id === bId);
@@ -496,13 +563,13 @@ const app = {
             }).join('');
         }
     },
-    seek(step) { const tempo = parseFloat(document.getElementById('tempo').value); this.pauseOffset = step * tempo; if(this.isPlaying) this.startTime = this.audio.currentTime - this.pauseOffset; this.lastStep = -1; this.refreshMonitor(Math.floor(step/16)); },
+    seek(step) { const tempo = parseFloat(document.getElementById('tempo').value); this.pauseOffset = step * tempo; if(this.isPlaying && this.audio) this.startTime = this.audio.currentTime - this.pauseOffset; this.lastStep = -1; this.refreshMonitor(Math.floor(step/16)); },
     startSelect(sId, bId, r, c) { this.selection.active = true; this.selection.start = { sId, bId, r, c }; this.selection.end = { sId, bId, r, c }; this.updateUISelection(); },
     enterSelect(sId, bId, r, c) { if(this.selection.active) { this.selection.end = { sId, bId, r, c }; this.updateUISelection(); } },
     updateUISelection() { const range = this.getSelectedRange(); document.querySelectorAll('.grid-cell').forEach(el => el.classList.toggle('selected', range.includes(el.getAttribute('data-loc')))); },
     getSelectedRange() { if (!this.selection.start || !this.selection.end) return []; const s = this.selection.start, e = this.selection.end; if (s.bId !== e.bId) return [`${s.sId}-${s.bId}-${s.r}-${s.c}`]; let res = []; for(let r=Math.min(s.r,e.r); r<=Math.max(s.r,e.r); r++) for(let c=Math.min(s.c,e.c); c<=Math.max(s.c,e.c); c++) res.push(`${s.sId}-${s.bId}-${r}-${c}`); return res; },
     copyData() { const range = this.getSelectedRange(); if(!range.length) return; const bar = this.getBarById(this.selection.start.bId); const rMin = Math.min(this.selection.start.r, this.selection.end.r), cMin = Math.min(this.selection.start.c, this.selection.end.c); this.clipboard = range.map(loc => { const [,, r, c] = loc.split('-').map(Number); return { relR: r - rMin, relC: c - cMin, val: bar.grid[r][c] }; }); },
-    pasteData() { if (!this.clipboard || !this.selection.start) return; const targetBar = this.getBarById(this.selection.start.bId); this.clipboard.forEach(item => { const tr = this.selection.start.r + item.relR, tc = this.selection.start.c + item.relC; if (tr < 6 && tc < 16) targetBar.grid[tr][tc] = item.val; }); this.sortNotesInBar(targetBar); this.renderAll(); this.save(); },
+    pasteData() { if (!this.clipboard || !this.selection.start) return; const targetBar = this.getBarById(this.selection.start.bId); this.clipboard.forEach(item => { const tr = this.selection.start.r + item.relR, tc = this.selection.start.c + item.relC; if (tr < 6 && tc < 16) targetBar.grid[tr][tc] = item.val; }); this.renderAll(); this.save(); },
     deleteSelected() { const range = this.getSelectedRange(); if(!range.length) return; const bar = this.getBarById(this.selection.start.bId); range.forEach(loc => { const [,, r, c] = loc.split('-').map(Number); bar.grid[r][c] = ""; }); this.renderAll(); this.save(); },
     exportData() { 
         const title = document.getElementById('song-title').value || 'tabklung_fixed';
