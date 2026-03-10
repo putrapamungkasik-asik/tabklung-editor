@@ -232,6 +232,32 @@ const app = {
             const midi = new Midi(x.target.result);
             const sps = (60/(midi.header.tempos[0]?.bpm || 120))/4;
             document.getElementById('tempo').value = sps.toFixed(3);
+            
+            // --- FIX: Deteksi & Reset Nada Dasar (Key Signature) ---
+            this.keyBase = 0; // Reset ke Do=C secara default jika file tidak punya Key Meta-Event
+            
+            if (midi.header.keySignatures && midi.header.keySignatures.length > 0) {
+                const keySig = midi.header.keySignatures[0];
+                const keyMap = {
+                    "C": 0, "B#": 0, "C#": 1, "DB": 1, "D": 2, "D#": 3, "EB": 3,
+                    "E": 4, "FB": 4, "F": 5, "E#": 5, "F#": 6, "GB": 6, "G": 7,
+                    "G#": 8, "AB": 8, "A": 9, "A#": 10, "BB": 10, "B": 11, "CB": 11
+                };
+                
+                // Menggunakan toUpperCase agar deteksi library (kecil/besar) tetap terbaca
+                let baseIndex = keyMap[keySig.key.toUpperCase()];
+                
+                if (baseIndex !== undefined) {
+                    if (keySig.scale === "minor") {
+                        baseIndex = (baseIndex + 3) % 12;
+                    }
+                    this.keyBase = baseIndex;
+                }
+            }
+            // Pastikan UI Select terupdate dengan hasil deteksi
+            document.getElementById('key-base').value = this.keyBase;
+            // --------------------------------------------------------
+
             let notes = [];
             midi.tracks.forEach(t => t.notes.forEach(n => notes.push({midi: n.midi, step: Math.round(n.time / sps)})));
             
@@ -258,7 +284,10 @@ const app = {
             
             this.sections[0].bars.forEach(b => this.sortNotesInBar(b));
             this.rebuildTimeline(); this.renderAll(); this.save();
-            alert("MIDI Berhasil Diimpor dengan Octave Folding (Range 55-85)!");
+            
+            let keyText = document.getElementById('key-base').options[this.keyBase].text;
+            let bpmInfo = midi.header.tempos[0]?.bpm ? Math.round(midi.header.tempos[0].bpm) : 120;
+            alert(`MIDI Berhasil Diimpor!\nBPM: ${bpmInfo}\nNada Dasar: ${keyText}\n(Reset diterapkan sebelum scan)`);
         };
         reader.readAsArrayBuffer(file);
     },
@@ -408,7 +437,6 @@ const app = {
         const chromaticMap = { "1/":1, "1\\":1, "2/":3, "2\\":3, "4/":6, "4\\":6, "5/":8, "5\\":8, "6/":10, "6\\":10 };
         const baseMap = { "1":0, "2":2, "3":4, "4":5, "5":7, "6":9, "7":11 };
         
-        // Handle Piano Mode (A-G notation)
         if (s.match(/[A-G]/i)) {
             const m = {"C":0,"C#":1,"D":2,"D#":3,"E":4,"F":5,"F#":6,"G":7,"G#":8,"A":9,"A#":10,"B":11}; 
             let match=s.match(/([A-G]#?)(\d)/i); 
@@ -416,7 +444,6 @@ const app = {
             return s;
         }
 
-        // Handle Solfege Mode (123 notation)
         let clean = s.replace(/[\.\u0323]/g, '');
         let octave = (s.split('.').length - 1) - (s.split('\u0323').length - 1);
         
@@ -461,7 +488,6 @@ const app = {
                 });
             } else { this.hideAutocomplete(); }
         } else {
-            // Solmisasi Autocomplete Logic
             const num = val[0];
             if ("1234567".includes(num)) {
                 let options = [];
