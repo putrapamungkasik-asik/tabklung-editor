@@ -97,6 +97,24 @@
             <button class="btn-tool" style="background:var(--deep-orange);" onclick="app.quantizeAll(document.getElementById('mass-layer-target').value)">🎯 Selective Mass</button>
         </div>
 
+        <div style="border-left: 1px solid #334; padding-left: 5px; display: flex; align-items: center; gap: 4px;">
+            <select id="mass-delete-target" class="layer-selector">
+                <option value="all">Semua Layer</option>
+                <option value="0">Layer 1</option>
+                <option value="1">Layer 2</option>
+                <option value="2">Layer 3</option>
+                <option value="3">Layer 4</option>
+                <option value="4">Layer 5</option>
+                <option value="5">Layer CH</option>
+            </select>
+            <button class="btn-tool" style="background:var(--danger);" onclick="app.clearLayerMass(document.getElementById('mass-delete-target').value)">🗑️ Hapus Masal</button>
+        </div>
+
+        <div style="border-left: 1px solid #334; padding-left: 5px; display: flex; align-items: center; gap: 4px;">
+            <button class="btn-tool" style="background:#0ea5e9;" onclick="app.transposeOctave(1)">🔼 Oct</button>
+            <button class="btn-tool" style="background:#0ea5e9;" onclick="app.transposeOctave(-1)">🔽 Oct</button>
+        </div>
+
         <div class="mode-selector">
             <button id="mode-piano" class="btn-mode active" onclick="app.setDisplayMode('piano')">Piano</button>
             <button id="mode-solfege" class="btn-mode" onclick="app.setDisplayMode('solfege')">123</button>
@@ -233,8 +251,7 @@ const app = {
             const sps = (60/(midi.header.tempos[0]?.bpm || 120))/4;
             document.getElementById('tempo').value = sps.toFixed(3);
             
-            // --- FIX: Deteksi & Reset Nada Dasar (Key Signature) ---
-            this.keyBase = 0; // Reset ke Do=C secara default jika file tidak punya Key Meta-Event
+            this.keyBase = 0; 
             
             if (midi.header.keySignatures && midi.header.keySignatures.length > 0) {
                 const keySig = midi.header.keySignatures[0];
@@ -244,7 +261,6 @@ const app = {
                     "G#": 8, "AB": 8, "A": 9, "A#": 10, "BB": 10, "B": 11, "CB": 11
                 };
                 
-                // Menggunakan toUpperCase agar deteksi library (kecil/besar) tetap terbaca
                 let baseIndex = keyMap[keySig.key.toUpperCase()];
                 
                 if (baseIndex !== undefined) {
@@ -254,9 +270,7 @@ const app = {
                     this.keyBase = baseIndex;
                 }
             }
-            // Pastikan UI Select terupdate dengan hasil deteksi
             document.getElementById('key-base').value = this.keyBase;
-            // --------------------------------------------------------
 
             let notes = [];
             midi.tracks.forEach(t => t.notes.forEach(n => notes.push({midi: n.midi, step: Math.round(n.time / sps)})));
@@ -292,6 +306,40 @@ const app = {
         reader.readAsArrayBuffer(file);
     },
 
+    // --- FITUR BARU: TRANSPOSE OKTAF MASAL ---
+    transposeOctave(dir) {
+        let changed = false;
+        this.sections.forEach(section => {
+            section.bars.forEach(bar => {
+                for (let r = 0; r < 5; r++) { // Hanya layer 1-5, abaikan layer CH (index 5)
+                    for (let c = 0; c < 16; c++) {
+                        let val = bar.grid[r][c];
+                        if (val !== "") {
+                            let midi = parseInt(val);
+                            let newMidi = midi + (dir * 12);
+                            // Validasi range standar MIDI
+                            if (newMidi >= 0 && newMidi <= 127) {
+                                bar.grid[r][c] = newMidi.toString();
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                // Urutkan ulang susunan not pada bar setelah ditranspose
+                this.sortNotesInBar(bar);
+            });
+        });
+
+        if (changed) {
+            this.renderAll();
+            this.save();
+            alert("Transpose Oktaf " + (dir > 0 ? "NAIK (+1 Oktaf)" : "TURUN (-1 Oktaf)") + " Berhasil Diterapkan Keseluruhan!");
+        } else {
+            alert("Tidak ada nada yang bisa ditranspose.");
+        }
+    },
+    // --- END FITUR BARU ---
+
     quantizeToAngklung(bId, mode = 'all') {
         const bar = this.getBarById(bId);
         if (!bar) return;
@@ -322,6 +370,26 @@ const app = {
         if (!confirm(`Terapkan gaya Angklung ke ${label} pada seluruh bar?`)) return;
         this.sections.forEach(section => section.bars.forEach(bar => this.quantizeToAngklung(bar.id, mode)));
         this.renderAll(); this.save(); alert("Proses Quantize Berhasil!");
+    },
+
+    clearLayerMass(target) {
+        let label = target === 'all' ? "SEMUA Layer" : (target === '5' ? "Layer CH (Chord)" : `Layer ${parseInt(target) + 1}`);
+        if (!confirm(`Yakin ingin MENGHAPUS isi dari ${label} pada SELURUH bar di semua grup? Data yang dihapus tidak bisa dikembalikan.`)) return;
+
+        this.sections.forEach(section => {
+            section.bars.forEach(bar => {
+                for (let c = 0; c < 16; c++) {
+                    if (target === 'all') {
+                        for (let r = 0; r < 6; r++) bar.grid[r][c] = "";
+                    } else {
+                        bar.grid[parseInt(target)][c] = "";
+                    }
+                }
+            });
+        });
+        this.renderAll(); 
+        this.save(); 
+        alert(`Penghapusan ${label} berhasil diterapkan!`);
     },
 
     doubleOctave(bId) {
